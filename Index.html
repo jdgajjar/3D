@@ -3,150 +3,204 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Particle Body Tracker</title>
+    <title>3D Human Particle Tracker</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #container { position: relative; width: 100vw; height: 100vh; }
+        body { margin: 0; overflow: hidden; background: #000; }
         canvas { display: block; }
-        #info {
-            position: absolute; top: 20px; left: 20px; color: cyan;
-            pointer-events: none; text-transform: uppercase; letter-spacing: 2px;
+        #webcam { display: none; }
+        #status { 
+            position: absolute; top: 10px; left: 10px; 
+            color: #0f0; font-family: monospace; 
+            background: rgba(0,0,0,0.5); padding: 10px;
         }
-        /* Hidden video element for processing */
-        #video { visibility: hidden; position: absolute; width: 1px; height: 1px; }
     </style>
 </head>
 <body>
+    <div id="status">Initializing...</div>
+    <video id="webcam" autoplay playsinline></video>
 
-    <div id="info">System Active: Body Mesh Particles</div>
-    <video id="video" playsinline></video>
-    <div id="container"></div>
+    <!-- Three.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    
+    <!-- MediaPipe Pose Detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.min.js"></script>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-            }
-        }
-    </script>
+    <script>
+        // Three.js Setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 5;
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { Pose } from 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js';
-        import { Camera } from 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js';
-
-        // --- Configuration ---
-        const PARTICLE_COUNT = 33; // MediaPipe Pose provides 33 landmarks
-        let scene, camera, renderer, particles, geometry, material;
-        const videoElement = document.getElementById('video');
-
-        // --- Initialization ---
-        function initThree() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 2;
-
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.getElementById('container').appendChild(renderer.domElement);
-
-            // Particle Geometry
-            geometry = new THREE.BufferGeometry();
-            const positions = new Float32Array(PARTICLE_COUNT * 3);
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-            // Glowing Particle Material
-            material = new THREE.PointsMaterial({
-                color: 0x00ffff,
-                size: 0.08,
-                transparent: true,
-                blending: THREE.AdditiveBlending,
-                map: createCircleTexture(),
-                depthWrite: false
-            });
-
-            particles = new THREE.Points(geometry, material);
-            scene.add(particles);
-
-            // Add a slight ambient light
-            const light = new THREE.PointLight(0x00ffff, 1, 10);
-            light.position.set(0, 0, 2);
-            scene.add(light);
-        }
-
-        function createCircleTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 64; canvas.height = 64;
-            const ctx = canvas.getContext('2d');
-            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-            gradient.addColorStop(0, 'rgba(255,255,255,1)');
-            gradient.addColorStop(0.2, 'rgba(0,255,255,0.8)');
-            gradient.addColorStop(0.5, 'rgba(0,100,255,0.2)');
-            gradient.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, 64, 64);
-            return new THREE.CanvasTexture(canvas);
-        }
-
-        // --- MediaPipe Pose Setup ---
-        const pose = new Pose({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        // Particle System
+        const particleCount = 33; // 33 pose landmarks
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const material = new THREE.PointsMaterial({
+            size: 0.15,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
         });
+        
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
 
+        // Trail effect with lines
+        const lineGeometry = new THREE.BufferGeometry();
+        const linePositions = new Float32Array(particleCount * 3);
+        lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+        
+        const lineMaterial = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.3
+        });
+        
+        const connections = new THREE.LineSegments(lineGeometry, lineMaterial);
+        scene.add(connections);
+
+        // Webcam Setup
+        const videoElement = document.getElementById('webcam');
+        const statusDiv = document.getElementById('status');
+        
+        // MediaPipe Pose
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`
+        });
+        
         pose.setOptions({
             modelComplexity: 1,
             smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: false,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
 
-        pose.onResults((results) => {
-            if (!results.poseLandmarks) return;
+        pose.onResults(onPoseResults);
 
-            const positions = geometry.attributes.position.array;
+        // Process pose landmarks
+        function onPoseResults(results) {
+            if (results.poseLandmarks) {
+                statusDiv.textContent = 'Tracking Active';
+                
+                const posAttr = particles.geometry.attributes.position;
+                const colAttr = particles.geometry.attributes.color;
+                
+                results.poseLandmarks.forEach((landmark, i) => {
+                    // Convert normalized coordinates to 3D space
+                    const x = (landmark.x - 0.5) * 4;
+                    const y = -(landmark.y - 0.5) * 4;
+                    const z = -landmark.z * 2;
+                    
+                    posAttr.array[i * 3] = x;
+                    posAttr.array[i * 3 + 1] = y;
+                    posAttr.array[i * 3 + 2] = z;
+                    
+                    // Glowing color gradient
+                    const hue = i / particleCount;
+                    const color = new THREE.Color().setHSL(hue, 1.0, 0.5);
+                    colAttr.array[i * 3] = color.r;
+                    colAttr.array[i * 3 + 1] = color.g;
+                    colAttr.array[i * 3 + 2] = color.b;
+                });
+                
+                posAttr.needsUpdate = true;
+                colAttr.needsUpdate = true;
+                
+                // Update line connections
+                updateConnections(results.poseLandmarks);
+            } else {
+                statusDiv.textContent = 'No Pose Detected';
+            }
+        }
+
+        // Draw skeleton connections
+        function updateConnections(landmarks) {
+            const connections = [
+                [0, 1], [1, 2], [2, 3], [3, 7],
+                [0, 4], [4, 5], [5, 6], [6, 8],
+                [9, 10], [11, 12], [11, 13], [13, 15],
+                [15, 17], [15, 19], [15, 21],
+                [12, 14], [14, 16], [16, 18], [16, 20], [16, 22],
+                [11, 23], [12, 24], [23, 24],
+                [23, 25], [24, 26], [25, 27], [26, 28],
+                [27, 29], [28, 30], [27, 31], [28, 32]
+            ];
             
-            results.poseLandmarks.forEach((landmark, i) => {
-                // Map MediaPipe coordinates (0 to 1) to Three.js coordinates
-                // We flip X to act as a mirror
-                positions[i * 3] = (0.5 - landmark.x) * 3; 
-                positions[i * 3 + 1] = (0.5 - landmark.y) * 3;
-                positions[i * 3 + 2] = -landmark.z; // Z depth
+            const linePos = lineGeometry.attributes.position;
+            let idx = 0;
+            
+            connections.forEach(([start, end]) => {
+                const startLm = landmarks[start];
+                const endLm = landmarks[end];
+                
+                linePos.array[idx++] = (startLm.x - 0.5) * 4;
+                linePos.array[idx++] = -(startLm.y - 0.5) * 4;
+                linePos.array[idx++] = -startLm.z * 2;
+                
+                linePos.array[idx++] = (endLm.x - 0.5) * 4;
+                linePos.array[idx++] = -(endLm.y - 0.5) * 4;
+                linePos.array[idx++] = -endLm.z * 2;
             });
+            
+            linePos.needsUpdate = true;
+        }
 
-            geometry.attributes.position.needsUpdate = true;
-        });
+        // Start webcam
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 1280, height: 720 }
+                });
+                videoElement.srcObject = stream;
+                
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await pose.send({ image: videoElement });
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                camera.start();
+                
+                statusDiv.textContent = 'Camera Started';
+            } catch (error) {
+                statusDiv.textContent = 'Camera Error: ' + error.message;
+            }
+        }
 
-        // --- Main Loop ---
+        // Animation loop
         function animate() {
             requestAnimationFrame(animate);
             
-            // Subtle rotation for a 3D effect
+            // Rotate scene slowly
             particles.rotation.y += 0.002;
+            connections.rotation.y += 0.002;
             
             renderer.render(scene, camera);
         }
 
-        // Handle Resize
+        // Handle window resize
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // Start Camera
-        const cam = new Camera(videoElement, {
-            onFrame: async () => {
-                await pose.send({image: videoElement});
-            },
-            width: 640,
-            height: 480
-        });
-
-        initThree();
+        // Initialize
+        startCamera();
         animate();
-        cam.start();
     </script>
 </body>
 </html>
-
