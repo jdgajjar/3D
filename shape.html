@@ -15,7 +15,7 @@ video {
     position: absolute;
     top: 0;
     left: 0;
-    transform: scaleX(-1);
+    transform: scaleX(-1); /* mirror camera */
     opacity: 0;
     pointer-events: none;
 }
@@ -31,36 +31,29 @@ video {
     border-radius: 8px;
 }
 
-/* 🔹 Top-right button */
 #back-btn {
     position: absolute;
     top: 15px;
     right: 15px;
+    z-index: 10;
     padding: 10px 16px;
     background: rgba(0,0,0,0.6);
     color: #fff;
-    border: 1px solid #00ffff;
+    border: 1px solid cyan;
     border-radius: 8px;
     cursor: pointer;
-    font-size: 14px;
-}
-
-#back-btn:hover {
-    background: rgba(0,255,255,0.2);
 }
 </style>
 </head>
 
 <body>
 
-<button id="back-btn" onclick="window.location.href='index.html'">
-⬅ Back
-</button>
+<button id="back-btn" onclick="location.href='index.html'">⬅ Back</button>
 
 <div id="instructions">
     <h3>Hand Controls</h3>
-    <p>🖐 <b>Move Hand:</b> Rotate & Move Particles</p>
-    <p>👌 <b>Pinch:</b> Switch Shape</p>
+    <p>🖐 Move Hand: Rotate Particles</p>
+    <p>👌 Pinch: Change Shape</p>
     <p>Current Shape: <span id="shape-name">Sphere</span></p>
 </div>
 
@@ -71,18 +64,17 @@ video {
 <script>
 /* ---------------- CONFIG ---------------- */
 const PARTICLE_COUNT = 15000;
-const CAM_DEPTH = 60;
 let currentShapeIndex = 0;
 let isPinching = false;
 let lastPinchTime = 0;
 
 const targetRotation = new THREE.Vector2();
-const shapes = ['Sphere', 'Heart', 'Saturn', 'Torus'];
+const shapes = ['Sphere', 'Torus'];
 
-/* ---------------- THREE SETUP ---------------- */
+/* ---------------- THREE ---------------- */
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
-camera.position.z = CAM_DEPTH;
+camera.position.z = 60;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -91,38 +83,28 @@ document.body.appendChild(renderer.domElement);
 /* ---------------- PARTICLES ---------------- */
 const geometry = new THREE.BufferGeometry();
 const positions = new Float32Array(PARTICLE_COUNT * 3);
-const colors = new Float32Array(PARTICLE_COUNT * 3);
 const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
 
-const color = new THREE.Color();
-
 for (let i = 0; i < PARTICLE_COUNT; i++) {
-    positions[i*3] = (Math.random() - 0.5) * 100;
-    positions[i*3+1] = (Math.random() - 0.5) * 100;
-    positions[i*3+2] = (Math.random() - 0.5) * 100;
-
-    color.setHSL(0.55, 0.8, 0.6);
-    colors[i*3] = color.r;
-    colors[i*3+1] = color.g;
-    colors[i*3+2] = color.b;
+    positions[i*3] = (Math.random()-0.5)*100;
+    positions[i*3+1] = (Math.random()-0.5)*100;
+    positions[i*3+2] = (Math.random()-0.5)*100;
 }
 
 geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
 const particles = new THREE.Points(
     geometry,
     new THREE.PointsMaterial({
         size: 0.4,
-        vertexColors: true,
-        blending: THREE.AdditiveBlending,
+        color: 0x00ffff,
         transparent: true
     })
 );
 scene.add(particles);
 
 /* ---------------- SHAPES ---------------- */
-function getPointOnSphere(i) {
+function sphere(i){
     const r = 25;
     const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
     const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
@@ -133,21 +115,21 @@ function getPointOnSphere(i) {
     };
 }
 
-function getPointOnTorus() {
-    const u = Math.random() * Math.PI * 2;
-    const v = Math.random() * Math.PI * 2;
+function torus(){
+    const u = Math.random()*Math.PI*2;
+    const v = Math.random()*Math.PI*2;
     return {
-        x: (20 + 8 * Math.cos(v)) * Math.cos(u),
-        y: (20 + 8 * Math.cos(v)) * Math.sin(u),
-        z: 8 * Math.sin(v)
+        x: (20 + 8*Math.cos(v))*Math.cos(u),
+        y: (20 + 8*Math.cos(v))*Math.sin(u),
+        z: 8*Math.sin(v)
     };
 }
 
-function setShape(type) {
+function setShape(type){
     document.getElementById('shape-name').innerText = shapes[type];
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-        const p = type === 3 ? getPointOnTorus() : getPointOnSphere(i);
-        targetPositions[i*3] = p.x;
+    for(let i=0;i<PARTICLE_COUNT;i++){
+        const p = type === 0 ? sphere(i) : torus();
+        targetPositions[i*3]   = p.x;
         targetPositions[i*3+1] = p.y;
         targetPositions[i*3+2] = p.z;
     }
@@ -155,68 +137,83 @@ function setShape(type) {
 setShape(0);
 
 /* ---------------- MEDIAPIPE ---------------- */
-const video = document.createElement('video');
+const videoElement = document.createElement('video');
+
 const hands = new Hands({
     locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
 });
 
-hands.setOptions({ maxNumHands: 1 });
-hands.onResults(results => {
+hands.setOptions({
+    maxNumHands: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+});
+
+hands.onResults(onResults);
+
+const cam = new Camera(videoElement, {
+    onFrame: async () => {
+        await hands.send({ image: videoElement });
+    },
+    width: 640,
+    height: 480
+});
+cam.start();
+
+/* ---------------- HAND RESULTS ---------------- */
+function onResults(results){
     if (!results.multiHandLandmarks) return;
 
     const lm = results.multiHandLandmarks[0];
-    const indexTip = lm[8];
+    const index = lm[8];
+    const thumb = lm[4];
 
     /* 🔥 FIXED MIRROR ROTATION */
-    const x = -(indexTip.x - 0.5) * 2; // inverted
-    const y = -(indexTip.y - 0.5) * 2;
+    const x = -(index.x - 0.5) * 2;
+    const y = -(index.y - 0.5) * 2;
 
     targetRotation.x = y * 2;
     targetRotation.y = x * 2;
 
-    const d = Math.hypot(lm[4].x - indexTip.x, lm[4].y - indexTip.y);
-    if (d < 0.05 && !isPinching && Date.now() - lastPinchTime > 1000) {
+    /* PINCH */
+    const d = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+    if (d < 0.05 && !isPinching && Date.now()-lastPinchTime>1000){
         isPinching = true;
         lastPinchTime = Date.now();
         currentShapeIndex = (currentShapeIndex + 1) % shapes.length;
         setShape(currentShapeIndex);
     }
     if (d >= 0.05) isPinching = false;
-});
-
-new Camera(video, {
-    onFrame: async () => hands.send({ image: video }),
-    width: 640,
-    height: 480
-}).start();
+}
 
 /* ---------------- ANIMATE ---------------- */
-function animate() {
+function animate(){
     requestAnimationFrame(animate);
 
     const p = geometry.attributes.position.array;
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-        const j = i * 3;
-        p[j] += (targetPositions[j] - p[j]) * 0.05;
-        p[j+1] += (targetPositions[j+1] - p[j+1]) * 0.05;
-        p[j+2] += (targetPositions[j+2] - p[j+2]) * 0.05;
+    for(let i=0;i<PARTICLE_COUNT;i++){
+        const j=i*3;
+        p[j]   += (targetPositions[j]-p[j]) * 0.05;
+        p[j+1] += (targetPositions[j+1]-p[j+1]) * 0.05;
+        p[j+2] += (targetPositions[j+2]-p[j+2]) * 0.05;
     }
     geometry.attributes.position.needsUpdate = true;
 
-    particles.rotation.x += (targetRotation.x - particles.rotation.x) * 0.05;
-    particles.rotation.y += (targetRotation.y - particles.rotation.y) * 0.05;
-    particles.rotation.z += 0.001;
+    particles.rotation.x += (targetRotation.x - particles.rotation.x)*0.05;
+    particles.rotation.y += (targetRotation.y - particles.rotation.y)*0.05;
 
     renderer.render(scene, camera);
 }
 animate();
 
-window.addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
+window.addEventListener('resize',()=>{
+    camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+    renderer.setSize(innerWidth,innerHeight);
 });
 </script>
+
 </body>
 </html>
+
 
