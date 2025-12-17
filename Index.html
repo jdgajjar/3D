@@ -1,173 +1,127 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Face Particle Tracker</title>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background: #000;
-        }
-        #canvas {
-            width: 100vw;
-            height: 100vh;
-            display: block;
-        }
-        #video {
-            display: none;
-        }
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: #0ff;
-            font-family: monospace;
-            font-size: 14px;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Real-Time Multi Face 3D Particle Tracker</title>
+<style>
+  body { margin:0; overflow:hidden; background:black; }
+  video { display:none; }
+</style>
 </head>
 <body>
-    <div id="info">Initializing webcam...</div>
-    <video id="video" playsinline></video>
-    <canvas id="canvas"></canvas>
 
-    <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<video id="video" autoplay playsinline></video>
 
-    <script>
-        // Three.js Scene Setup
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 5;
+<!-- Three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 
-        const renderer = new THREE.WebGLRenderer({ 
-            canvas: document.getElementById('canvas'),
-            antialias: true,
-            alpha: true
-        });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
-        // Particle System Setup
-        const numParticles = 468; // MediaPipe face mesh landmarks
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(numParticles * 3);
-        
-        // Initialize particles at origin
-        for (let i = 0; i < numParticles * 3; i++) {
-            positions[i] = 0;
-        }
+<script>
+/* ================= SCENE ================= */
+const scene = new THREE.Scene();
 
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+const camera = new THREE.PerspectiveCamera(
+  60, window.innerWidth/window.innerHeight, 0.1, 1000
+);
+camera.position.z = 6;
 
-        // Glowing particle material
-        const material = new THREE.PointsMaterial({
-            color: 0x00ffff,
-            size: 0.08,
-            transparent: true,
-            opacity: 0.8,
-            blending: THREE.AdditiveBlending,
-            sizeAttenuation: true
-        });
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
 
-        const particles = new THREE.Points(geometry, material);
-        scene.add(particles);
+/* ================= FACE STORAGE ================= */
+const MAX_FACES = 5;
+const LANDMARKS = 468;
+const faceParticles = [];
 
-        // Add ambient glow
-        const particleGlow = new THREE.PointLight(0x00ffff, 1, 10);
-        scene.add(particleGlow);
+/* ================= CREATE FACE ================= */
+function createFace(color) {
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(LANDMARKS * 3);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
 
-        // MediaPipe Face Mesh Setup
-        const videoElement = document.getElementById('video');
-        const infoElement = document.getElementById('info');
+  const mat = new THREE.PointsMaterial({
+    size: 0.05,
+    color,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending
+  });
 
-        const faceMesh = new FaceMesh({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-            }
-        });
+  const points = new THREE.Points(geo, mat);
+  scene.add(points);
+  return points;
+}
 
-        faceMesh.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+/* ================= MEDIAPIPE ================= */
+const video = document.getElementById("video");
 
-        faceMesh.onResults(onResults);
+const faceMesh = new FaceMesh({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+});
 
-        // Process face landmarks
-        function onResults(results) {
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                const landmarks = results.multiFaceLandmarks[0];
-                const positions = particles.geometry.attributes.position.array;
+faceMesh.setOptions({
+  maxNumFaces: MAX_FACES,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
 
-                // Map face landmarks to 3D particles
-                for (let i = 0; i < landmarks.length; i++) {
-                    const landmark = landmarks[i];
-                    
-                    // Convert normalized coordinates to 3D space
-                    // MediaPipe gives x,y normalized [0,1] and z depth
-                    positions[i * 3] = (landmark.x - 0.5) * 6;      // X: centered and scaled
-                    positions[i * 3 + 1] = -(landmark.y - 0.5) * 6; // Y: inverted and scaled
-                    positions[i * 3 + 2] = -landmark.z * 3;         // Z: depth
-                }
+faceMesh.onResults(results => {
+  // Remove extra faces
+  while (faceParticles.length > results.multiFaceLandmarks.length) {
+    scene.remove(faceParticles.pop());
+  }
 
-                particles.geometry.attributes.position.needsUpdate = true;
-                
-                // Update glow position to center of face
-                particleGlow.position.set(
-                    positions[0],
-                    positions[1],
-                    positions[2]
-                );
+  results.multiFaceLandmarks.forEach((landmarks, i) => {
+    if (!faceParticles[i]) {
+      faceParticles[i] = createFace(
+        new THREE.Color().setHSL(i / MAX_FACES, 1, 0.5)
+      );
+    }
 
-                infoElement.textContent = `Tracking ${landmarks.length} face landmarks`;
-            } else {
-                infoElement.textContent = 'No face detected';
-            }
-        }
+    const arr = faceParticles[i].geometry.attributes.position.array;
 
-        // Start webcam
-        const cameraUtils = new Camera(videoElement, {
-            onFrame: async () => {
-                await faceMesh.send({ image: videoElement });
-            },
-            width: 640,
-            height: 480
-        });
-        cameraUtils.start();
+    landmarks.forEach((lm, j) => {
+      arr[j*3]     = (lm.x - 0.5) * 6 + i * 2;
+      arr[j*3 + 1] = -(lm.y - 0.5) * 6;
+      arr[j*3 + 2] = -lm.z * 4;
+    });
 
-        // Animation loop
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            // Rotate particle cloud slowly
-            particles.rotation.y += 0.001;
-            
-            renderer.render(scene, camera);
-        }
-        animate();
+    faceParticles[i].geometry.attributes.position.needsUpdate = true;
+  });
+});
 
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+/* ================= CAMERA ================= */
+const cam = new Camera(video, {
+  onFrame: async () => await faceMesh.send({ image: video }),
+  width: 640,
+  height: 480
+});
+cam.start();
 
-        // Grant camera permission info
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(() => {
-                infoElement.textContent = 'Camera ready. Position your face...';
-            })
-            .catch((err) => {
-                infoElement.textContent = 'Camera permission denied: ' + err.message;
-            });
-    </script>
+/* ================= LOOP ================= */
+function animate() {
+  requestAnimationFrame(animate);
+
+  faceParticles.forEach(f => {
+    f.rotation.y += 0.001;
+  });
+
+  renderer.render(scene, camera);
+}
+animate();
+
+/* ================= RESIZE ================= */
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
 </body>
 </html>
