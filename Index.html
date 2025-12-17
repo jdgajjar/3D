@@ -3,47 +3,92 @@
 <head>
 <meta charset="UTF-8">
 <title>Real-Time Multi Face 3D Particle Tracker</title>
+
 <style>
-  body { margin:0; overflow:hidden; background:black; }
-  video { display:none; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: black;
+    font-family: Arial, sans-serif;
+  }
+
+  video {
+    display: none;
+  }
+
+  /* Navigation Button */
+  #goShape {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    padding: 12px 22px;
+    background: rgba(0, 255, 255, 0.15);
+    color: #00ffff;
+    border: 1px solid #00ffff;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    backdrop-filter: blur(6px);
+  }
+
+  #goShape:hover {
+    background: rgba(0, 255, 255, 0.35);
+  }
 </style>
 </head>
 <body>
 
+<!-- NAV BUTTON -->
+<button id="goShape">Go to Shape Page</button>
+
+<!-- WEBCAM -->
 <video id="video" autoplay playsinline></video>
 
-<!-- Three.js -->
+<!-- THREE.JS -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 
-<!-- MediaPipe -->
+<!-- MEDIAPIPE -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-/* ================= SCENE ================= */
+/* =======================
+   SCENE SETUP
+======================= */
 const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(
-  60, window.innerWidth/window.innerHeight, 0.1, 1000
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  1000
 );
 camera.position.z = 6;
 
-const renderer = new THREE.WebGLRenderer({ antialias:true });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-/* ================= FACE STORAGE ================= */
+/* =======================
+   FACE PARTICLES STORAGE
+======================= */
 const MAX_FACES = 5;
 const LANDMARKS = 468;
 const faceParticles = [];
 
-/* ================= CREATE FACE ================= */
+/* =======================
+   CREATE FACE PARTICLES
+======================= */
 function createFace(color) {
-  const geo = new THREE.BufferGeometry();
-  const pos = new Float32Array(LANDMARKS * 3);
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(LANDMARKS * 3);
+  geometry.setAttribute(
+    "position",
+    new THREE.BufferAttribute(positions, 3)
+  );
 
-  const mat = new THREE.PointsMaterial({
+  const material = new THREE.PointsMaterial({
     size: 0.05,
     color,
     transparent: true,
@@ -51,16 +96,19 @@ function createFace(color) {
     blending: THREE.AdditiveBlending
   });
 
-  const points = new THREE.Points(geo, mat);
+  const points = new THREE.Points(geometry, material);
   scene.add(points);
   return points;
 }
 
-/* ================= MEDIAPIPE ================= */
+/* =======================
+   MEDIAPIPE FACE MESH
+======================= */
 const video = document.getElementById("video");
 
 const faceMesh = new FaceMesh({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+  locateFile: file =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
 });
 
 faceMesh.setOptions({
@@ -71,7 +119,9 @@ faceMesh.setOptions({
 });
 
 faceMesh.onResults(results => {
-  // Remove extra faces
+  if (!results.multiFaceLandmarks) return;
+
+  // Remove faces if people leave camera
   while (faceParticles.length > results.multiFaceLandmarks.length) {
     scene.remove(faceParticles.pop());
   }
@@ -83,44 +133,60 @@ faceMesh.onResults(results => {
       );
     }
 
-    const arr = faceParticles[i].geometry.attributes.position.array;
+    const positions =
+      faceParticles[i].geometry.attributes.position.array;
 
     landmarks.forEach((lm, j) => {
-      arr[j*3]     = (lm.x - 0.5) * 6 + i * 2;
-      arr[j*3 + 1] = -(lm.y - 0.5) * 6;
-      arr[j*3 + 2] = -lm.z * 4;
+      positions[j * 3]     = (lm.x - 0.5) * 6 + i * 2;
+      positions[j * 3 + 1] = -(lm.y - 0.5) * 6;
+      positions[j * 3 + 2] = -lm.z * 4;
     });
 
     faceParticles[i].geometry.attributes.position.needsUpdate = true;
   });
 });
 
-/* ================= CAMERA ================= */
-const cam = new Camera(video, {
-  onFrame: async () => await faceMesh.send({ image: video }),
+/* =======================
+   WEBCAM
+======================= */
+const cameraUtils = new Camera(video, {
+  onFrame: async () => {
+    await faceMesh.send({ image: video });
+  },
   width: 640,
   height: 480
 });
-cam.start();
+cameraUtils.start();
 
-/* ================= LOOP ================= */
+/* =======================
+   ANIMATION LOOP
+======================= */
 function animate() {
   requestAnimationFrame(animate);
 
-  faceParticles.forEach(f => {
-    f.rotation.y += 0.001;
+  faceParticles.forEach(face => {
+    face.rotation.y += 0.001;
   });
 
   renderer.render(scene, camera);
 }
 animate();
 
-/* ================= RESIZE ================= */
+/* =======================
+   RESIZE
+======================= */
 window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+/* =======================
+   PAGE NAVIGATION
+======================= */
+document.getElementById("goShape").onclick = () => {
+  window.location.href = "shape.html";
+};
 </script>
 
 </body>
